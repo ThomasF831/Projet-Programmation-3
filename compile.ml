@@ -3,11 +3,8 @@
      E_function      sortie fonction
      L_xxx           sauts
      S_xxx           chaîne
-
    expression calculée avec la pile si besoin, résultat final dans %rdi
-
    fonction : arguments sur la pile, résultat dans %rax ou sur la pile
-
             res k
             ...
             res 1
@@ -21,7 +18,6 @@
             ...
             calculs
    rsp ---> ...
-
 *)
 
 open Format
@@ -97,7 +93,7 @@ let rec expr env e = match e.expr_desc with
                                                                             | Bmod -> (movq (imm 0) (reg rdx)) ++ (movq (reg rsi) (reg rax)) ++ idivq (reg rdi) ++ (movq (reg rax) (reg rdi))
                                                                             | _ -> nop
                                                                   end in
-                                                                (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++ (opq (reg rdi) (reg rsi))
+                                                                (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++ (opq (reg rsi) (reg rdi))
   | TEbinop (Beq | Bne as op, e1, e2) -> let _ = op in
     (* TODO code pour egalite toute valeur *) assert false
   | TEunop (Uneg, e1) ->
@@ -109,7 +105,14 @@ let rec expr env e = match e.expr_desc with
   | TEunop (Ustar, e1) ->
     (* TODO code pour * *) assert false
   | TEprint el ->
-    (* TODO code pour Print *) assert false
+     let affiche x = match x.expr_typ with
+       | Tint -> (expr env x) ++ (call "print_int")
+       | _ -> nop
+     in let rec affiche_liste q = match q with
+       | [] -> nop
+       | x::q -> let cas = affiche_liste q in (affiche  x) ++ cas
+     in affiche_liste el
+    (* TODO code pour Print assert false *)
   | TEident x ->
     (* TODO code pour x *) assert false
   | TEassign ([{expr_desc=TEident x}], [e1]) ->
@@ -118,16 +121,19 @@ let rec expr env e = match e.expr_desc with
     (* TODO code pour x1,... := e1,... *) assert false
   | TEassign (_, _) ->
      assert false
-  | TEblock el ->
-     (* TODO code pour block *) assert false
+  | TEblock el -> let rec seq el = match el with
+                  | [] -> nop
+                  | x::el -> (expr env x) ++ (seq el)
+                  in seq el
+     (* TODO code pour block assert false *)
   | TEif (e1, e2, e3) ->
      (* TODO code pour if *) assert false
   | TEfor (e1, e2) ->
      (* TODO code pour for *) assert false
   | TEnew ty ->
      (* TODO code pour new S *) assert false
-  | TEcall (f, el) ->
-     (* TODO code pour appel fonction *) assert false
+  | TEcall (f, el) -> call ("F_"^f.fn_name)
+     (* TODO code pour appel fonction *)
   | TEdot (e1, {f_ofs=ofs}) ->
      (* TODO code pour e.f *) assert false
   | TEvars _ ->
@@ -138,12 +144,14 @@ let rec expr env e = match e.expr_desc with
     (* TODO code pour return e1,... *) assert false
   | TEreturn _ ->
      assert false
-  | TEincdec (e1, op) ->
-    (* TODO code pour return e++, e-- *) assert false
-
+  | TEincdec (e1, op) -> match op with
+                         | Inc -> movq (imm 1) (reg rsi) ++ addq (reg rsi) (reg rdi)
+                         | Dec -> movq (imm 1) (reg rsi) ++ subq (reg rsi) (reg rdi)
+(* TODO code pour return e++, e-- *)
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
-  (* TODO code pour fonction *) let s = f.fn_name in label ("F_" ^ s) 
+  (* TODO code pour fonction *) let s = f.fn_name in
+  label ("F_" ^ s) ++ (expr strings e) ++ ret
 
 let decl code = function
   | TDfunction (f, e) -> code ++ function_ f e
@@ -169,7 +177,7 @@ print_int:
 "; (* TODO print pour d'autres valeurs *)
    (* TODO appel malloc de stdlib *)
     data =
-      label "S_int" ++ string "%ld" ++
+      label "S_int" ++ string "%ld\n" ++
       (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop)
     ;
   }
