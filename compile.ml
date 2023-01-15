@@ -78,7 +78,9 @@ let rec expr env e = match e.expr_desc with
   | TEnil ->
     xorq (reg rdi) (reg rdi)
   | TEconstant (Cstring s) ->
-    (* TODO code pour constante string *) assert false
+     let l = (alloc_string s) in
+     movq (ilab l) (reg rdi)
+    (* TODO code pour constante string *)
   | TEbinop (Band, e1, e2) ->
     (* TODO code pour ET logique lazy *) assert false
   | TEbinop (Bor, e1, e2) ->
@@ -107,6 +109,7 @@ let rec expr env e = match e.expr_desc with
   | TEprint el ->
      let affiche x = match x.expr_typ with
        | Tint -> (expr env x) ++ (call "print_int")
+       | Tstring -> (expr env x) ++ (call "print_string")
        | _ -> nop
      in let rec affiche_liste q = match q with
        | [] -> nop
@@ -174,10 +177,16 @@ print_int:
         xorq    %rax, %rax
         call    printf
         ret
+
+print_string:
+        movq $0, %rax
+        call printf
+        ret
+
 "; (* TODO print pour d'autres valeurs *)
    (* TODO appel malloc de stdlib *)
     data =
       label "S_int" ++ string "%ld\n" ++
-      (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop)
+      (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop) (* On ajoute récursivement (label l ++ string s à nop pour (l,s) dans strings *)
     ;
   }
