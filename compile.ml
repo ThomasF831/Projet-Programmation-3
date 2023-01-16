@@ -80,11 +80,10 @@ let rec expr env e = match e.expr_desc with
   | TEconstant (Cstring s) ->
      let l = (alloc_string s) in
      movq (ilab l) (reg rdi)
-    (* TODO code pour constante string *)
   | TEbinop (Band, e1, e2) ->
-    (* TODO code pour ET logique lazy *) assert false
+     (expr env e1) ++ (pushq (reg rdi)) ++  (expr env e2) ++ (pushq (reg rdi)) ++ (popq r14) ++ (popq r13) ++ (call "and") ++ (movq (reg r15) (reg rdi))
   | TEbinop (Bor, e1, e2) ->
-    (* TODO code pour OU logique lazy *) assert false
+    (expr env e1) ++ (pushq (reg rdi)) ++  (expr env e2) ++ (pushq (reg rdi)) ++ (popq r14) ++ (popq r13) ++ (call "or") ++ (movq (reg r15) (reg rdi))
   | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) -> let _ = op in
     (* TODO code pour comparaison ints *) assert false
   | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) -> let opq = fun x y -> begin match op with
@@ -95,7 +94,7 @@ let rec expr env e = match e.expr_desc with
                                                                             | Bmod -> (movq (imm 0) (reg rdx)) ++ (movq (reg rsi) (reg rax)) ++ idivq (reg rdi) ++ (movq (reg rax) (reg rdi))
                                                                             | _ -> nop
                                                                   end in
-                                                                (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++ (opq (reg rsi) (reg rdi))
+                                                                (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq r13) ++ (popq r14) ++ (opq (reg rsi) (reg rdi))
   | TEbinop (Beq | Bne as op, e1, e2) -> let _ = op in
     (* TODO code pour egalite toute valeur *) assert false
   | TEunop (Uneg, e1) ->
@@ -110,6 +109,8 @@ let rec expr env e = match e.expr_desc with
      let affiche x = match x.expr_typ with
        | Tint -> (expr env x) ++ (call "print_int")
        | Tstring -> (expr env x) ++ (call "print_string")
+
+       | Tbool -> (expr env x) ++ (call "print_bool")
        | _ -> nop
      in let rec affiche_liste q = match q with
        | [] -> nop
@@ -183,9 +184,60 @@ print_string:
         call printf
         ret
 
+print_bool:
+        movq $1, %rsi
+        testq %rdi, %rdi
+        jne print_true
+        je print_false
+        ret
+
+print_true:
+        movq $true, %rdi
+        call print_string
+        ret
+
+print_false:
+        movq $false, %rdi
+        call print_string
+        ret
+
+true_dans_r15:
+        movq $1, %r15
+        ret
+
+false_dans_r15:
+        movq $0, %r15
+        ret
+
+and:
+        testq %r13, %r13
+        je false_dans_r15
+        jne and_aux
+        ret
+
+and_aux:
+        testq %r14, %r14
+        je false_dans_r15
+        jne true_dans_r15
+        ret
+
+or:
+        testq %r13, %r13
+        je or_aux
+        jne true_dans_r15
+        ret
+
+or_aux:
+        testq %r14, %r14
+        je false_dans_r15
+        jne true_dans_r15
+        ret
+
 "; (* TODO print pour d'autres valeurs *)
    (* TODO appel malloc de stdlib *)
     data =
+      label "true" ++ string "true\n" ++
+      label "false" ++ string "false\n" ++
       label "S_int" ++ string "%ld\n" ++
       (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop) (* On ajoute récursivement (label l ++ string s à nop pour (l,s) dans strings *)
     ;
