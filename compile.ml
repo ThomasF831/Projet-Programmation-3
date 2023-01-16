@@ -43,8 +43,10 @@ let allocz n = movq (imm n) (reg rdi) ++ call "allocz"
 
 let sizeof = Typing.sizeof
 
+let r = ref 0;;
+
 let new_label =
-  let r = ref 0 in fun () -> incr r; "L_" ^ string_of_int !r
+  fun () -> incr r; "L_" ^ string_of_int !r
 (* renvoie "L_i" en incrémentant i pour ne jamais avoir deux fois le même à partir de 0 *)
 
 type env = {
@@ -81,9 +83,9 @@ let rec expr env e = match e.expr_desc with
      let l = (alloc_string s) in
      movq (ilab l) (reg rdi)
   | TEbinop (Band, e1, e2) ->
-     (expr env e1) ++ (pushq (reg rdi)) ++  (expr env e2) ++ (pushq (reg rdi)) ++ (popq r14) ++ (popq r13) ++ (call "and") ++ (movq (reg r15) (reg rdi))
+     (expr env e1) ++ (pushq (reg rdi)) ++  (expr env e2) ++ (pushq (reg rdi)) ++ (popq r14) ++ (popq r13) ++ (call ("and_"^(string_of_int (!r)))) ++ ret ++ (label ("Laux_"^(string_of_int (!r)))) ++ ret  ++ (label (new_label())) ++ (movq (reg r15) (reg rdi))
   | TEbinop (Bor, e1, e2) ->
-    (expr env e1) ++ (pushq (reg rdi)) ++  (expr env e2) ++ (pushq (reg rdi)) ++ (popq r14) ++ (popq r13) ++ (call "or") ++ (movq (reg r15) (reg rdi))
+    (expr env e1) ++ (pushq (reg rdi)) ++ (popq r13) ++ (call ("or_"^(string_of_int (!r)))) ++ ret ++ (label ("Laux_"^(string_of_int (!r)))) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq r14) ++ (call ("or_aux_"^(string_of_int (!r)))) ++ ret ++ (label (new_label())) ++ (movq (reg r15) (reg rdi))
   | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) -> let _ = op in
     (* TODO code pour comparaison ints *) assert false
   | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) -> let opq = fun x y -> begin match op with
@@ -95,8 +97,10 @@ let rec expr env e = match e.expr_desc with
                                                                             | _ -> nop
                                                                   end in
                                                                 (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq r13) ++ (popq r14) ++ (opq (reg rsi) (reg rdi))
-  | TEbinop (Beq | Bne as op, e1, e2) -> let _ = op in
-    (* TODO code pour egalite toute valeur *) assert false
+  | TEbinop (Beq | Bne as op, e1, e2) -> (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq r13) ++ (popq r14) ++ (cmpq (reg r13) (reg r14)) ++
+                                           begin if op = Beq then (je ("true_dans_r15_"^(string_of_int (!r)))) ++ (jne ("false_dans_r15_"^(string_of_int (!r))))
+                                           else (je ("false_dans_r15_"^(string_of_int (!r)))) ++ (jne ("true_dans_r15_"^(string_of_int (!r)))) end ++ ret ++ (label ("Laux_"^(string_of_int (!r)))) ++ ret ++ (label (new_label ())) ++
+                                           (movq (reg r15) (reg rdi))
   | TEunop (Uneg, e1) ->
     (* TODO code pour negation ints *) assert false
   | TEunop (Unot, e1) ->
@@ -165,14 +169,8 @@ let file ?debug:(b=false) dl =
   debug := b;
   (* TODO calcul offset champs *)
   (* TODO code fonctions *) let funs = List.fold_left decl nop dl in
-  { text =
-      globl "main" ++ label "main" ++
-      call "F_main" ++
-      xorq (reg rax) (reg rax) ++
-      ret ++
-      funs ++
-      inline "
-print_int:
+  let str = ref
+"print_int:
         movq    %rdi, %rsi
         movq    $S_int, %rdi
         xorq    %rax, %rax
@@ -201,44 +199,53 @@ print_false:
         call print_string
         ret
 
-true_dans_r15:
+" in for i = 1 to (!r) do
+       str:= !str ^
+"true_dans_r15_"^(string_of_int i)^":
         movq $1, %r15
+        jmp L_"^(string_of_int i)^"
         ret
 
-false_dans_r15:
+false_dans_r15_"^(string_of_int i)^":
         movq $0, %r15
+        jmp L_"^(string_of_int i)^"
         ret
 
-and:
+
+and_"^(string_of_int i)^":
         testq %r13, %r13
-        je false_dans_r15
-        jne and_aux
+        je false_dans_r15_"^(string_of_int i)^"
+        jne and_aux_"^(string_of_int i)^"
         ret
 
-and_aux:
+and_aux_"^(string_of_int i)^":
         testq %r14, %r14
-        je false_dans_r15
-        jne true_dans_r15
+        je false_dans_r15_"^(string_of_int i)^"
+        jne true_dans_r15_"^(string_of_int i)^"
         ret
 
-or:
+or_"^(string_of_int i)^":
         testq %r13, %r13
-        je or_aux
-        jne true_dans_r15
+        je Laux_"^(string_of_int i)^"
+        jne true_dans_r15_"^(string_of_int i)^"
         ret
 
-or_aux:
+or_aux_"^(string_of_int i)^":
         testq %r14, %r14
-        je false_dans_r15
-        jne true_dans_r15
+        je false_dans_r15_"^(string_of_int i)^"
+        jne true_dans_r15_"^(string_of_int i)^"
         ret
-
-"; (* TODO print pour d'autres valeurs *)
+" done;
+        { text = globl "main" ++ label "main" ++
+         call "F_main" ++
+         xorq (reg rax) (reg rax) ++
+         ret ++
+         funs ++ inline(!str);
+   (* TODO print pour d'autres valeurs *)
    (* TODO appel malloc de stdlib *)
     data =
       label "true" ++ string "true\n" ++
       label "false" ++ string "false\n" ++
       label "S_int" ++ string "%ld\n" ++
-      (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop) (* On ajoute récursivement (label l ++ string s à nop pour (l,s) dans strings *)
-    ;
+      (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop) (* On ajoute récursivement (label l ++ string s à nop pour (l,s) dans strings *);
   }
