@@ -43,10 +43,8 @@ let allocz n = movq (imm n) (reg rdi) ++ call "allocz"
 
 let sizeof = Typing.sizeof
 
-let r = ref 0;;
-
 let new_label =
-  fun () -> incr r; "L_" ^ string_of_int !r
+  let r = ref 0 in fun () -> incr r; "L_" ^ string_of_int !r
 (* renvoie "L_i" en incrémentant i pour ne jamais avoir deux fois le même à partir de 0 *)
 
 type env = {
@@ -82,29 +80,44 @@ let rec expr env e = match e.expr_desc with
   | TEconstant (Cstring s) ->
      let l = (alloc_string s) in
      movq (ilab l) (reg rdi)
-  | TEbinop (Band, e1, e2) ->
-     (expr env e1) ++ (pushq (reg rdi)) ++  (expr env e2) ++ (pushq (reg rdi)) ++ (popq r14) ++ (popq r13) ++ (call ("and_"^(string_of_int (!r)))) ++ ret ++ (label ("Laux_"^(string_of_int (!r)))) ++ ret  ++ (label (new_label())) ++ (movq (reg r15) (reg rdi))
-  | TEbinop (Bor, e1, e2) ->
-    (expr env e1) ++ (pushq (reg rdi)) ++ (popq r13) ++ (call ("or_"^(string_of_int (!r)))) ++ ret ++ (label ("Laux_"^(string_of_int (!r)))) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq r14) ++ (call ("or_aux_"^(string_of_int (!r)))) ++ ret ++ (label (new_label())) ++ (movq (reg r15) (reg rdi))
-  | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) -> let _ = op in
-    (* TODO code pour comparaison ints *) assert false
+  | TEbinop (Band, e1, e2) -> let a, b, c, d = new_label(), new_label(), new_label(), new_label() in
+                              (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne a) ++ (je c) ++ ret ++
+                                (label a) ++ (expr env e2) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++
+                                (label b) ++ (movq (imm 1) (reg rdi)) ++ (jmp d) ++ ret ++
+                                (label c) ++ (movq (imm 0) (reg rdi)) ++ (jmp d) ++ ret ++
+                                (label d)
+  | TEbinop (Bor, e1, e2) -> let a, b, c, d = new_label(), new_label(), new_label(), new_label() in
+                              (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je a) ++ ret ++
+                                (label a) ++ (expr env e2) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++
+                                (label b) ++ (movq (imm 1) (reg rdi)) ++ (jmp d) ++ ret ++
+                                (label c) ++ (movq (imm 0) (reg rdi)) ++ (jmp d) ++ ret ++
+                                (label d)
+  | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) -> let a, b, c = new_label(), new_label(), new_label() in
+                                                     let jumps_op = begin match op with
+                                                       | Blt -> jl, jge
+                                                       | Ble -> jle, jg
+                                                       | Bgt -> jg, jle
+                                                       | Bge -> jge, jl
+                                                       | _ -> failwith "L'opération binaire n'est pas une comparaison d'entiers"
+                                                                    end
+                                                        in (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++
+                                                          (cmpq (reg rsi) (reg rdi)) ++ ((fst jumps_op) a) ++ ((snd jumps_op) b) ++
+                                                          (label a) ++ (movq (imm 1) (reg rdi)) ++ (jmp c) ++ ret ++
+                                                          (label b) ++ (movq (imm 0) (reg rdi)) ++ (jmp c) ++ ret ++
+                                                          (label c)
   | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) -> let opq = fun x y -> begin match op with
-                                                                            | Badd -> addq x y
-                                                                            | Bsub -> subq x y
-                                                                            | Bmul -> imulq x y
-                                                                            | Bdiv -> (movq (imm 0) (reg rdx)) ++ (movq (reg rsi) (reg rax)) ++ idivq (reg rdi) ++ (movq (reg rdx) (reg rdi))
-                                                                            | Bmod -> (movq (imm 0) (reg rdx)) ++ (movq (reg rsi) (reg rax)) ++ idivq (reg rdi) ++ (movq (reg rax) (reg rdi))
-                                                                            | _ -> nop
-                                                                  end in
-                                                                (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq r13) ++ (popq r14) ++ (opq (reg rsi) (reg rdi))
-  | TEbinop (Beq | Bne as op, e1, e2) -> (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq r13) ++ (popq r14) ++ (cmpq (reg r13) (reg r14)) ++
-                                           begin if op = Beq then (je ("true_dans_r15_"^(string_of_int (!r)))) ++ (jne ("false_dans_r15_"^(string_of_int (!r))))
-                                           else (je ("false_dans_r15_"^(string_of_int (!r)))) ++ (jne ("true_dans_r15_"^(string_of_int (!r)))) end ++ ret ++ (label ("Laux_"^(string_of_int (!r)))) ++ ret ++ (label (new_label ())) ++
-                                           (movq (reg r15) (reg rdi))
-  | TEunop (Uneg, e1) ->
-    (* TODO code pour negation ints *) assert false
-  | TEunop (Unot, e1) ->
-    (* TODO code pour negation bool *) assert false
+                                                                                     | Badd -> addq x y
+                                                                                     | Bsub -> subq x y
+                                                                                     | Bmul -> imulq x y
+                                                                                     | Bdiv -> (movq (imm 0) (reg rdx)) ++ (movq (reg rsi) (reg rax)) ++ idivq (reg rdi) ++ (movq (reg rdx) (reg rdi))
+                                                                                     | Bmod -> (movq (imm 0) (reg rdx)) ++ (movq (reg rsi) (reg rax)) ++ idivq (reg rdi) ++ (movq (reg rax) (reg rdi))
+                                                                                     | _ -> nop
+                                                                                     end in
+                                                                (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++ (opq (reg rsi) (reg rdi))
+  | TEbinop (Beq | Bne as op, e1, e2) -> let _ = op in
+    (* TODO code pour egalite toute valeur *) assert false
+  | TEunop (Uneg, e1) -> (expr env e1) ++ (negq (reg rdi))
+  | TEunop (Unot, e1) -> (expr env e1) ++ (movq (imm 1) (reg rsi)) ++ (subq (reg rdi) (reg rsi)) ++ (movq (reg rsi) (reg rdi))
   | TEunop (Uamp, e1) ->
     (* TODO code pour & *) assert false
   | TEunop (Ustar, e1) ->
@@ -120,9 +133,8 @@ let rec expr env e = match e.expr_desc with
        | [] -> nop
        | x::q -> let cas = affiche_liste q in (affiche  x) ++ cas
      in affiche_liste el
-    (* TODO code pour Print assert false *)
-  | TEident x ->
-    (* TODO code pour x *) assert false
+  | TEident x -> inline ("\tmovq "^(string_of_int x.v_addr)^"(%rbp), %rdi\n")
+    (* TODO code pour x *)
   | TEassign ([{expr_desc=TEident x}], [e1]) ->
     (* TODO code pour x := e *) assert false
   | TEassign ([lv], [e1]) ->
@@ -133,19 +145,23 @@ let rec expr env e = match e.expr_desc with
                   | [] -> nop
                   | x::el -> (expr env x) ++ (seq el)
                   in seq el
-     (* TODO code pour block assert false *)
-  | TEif (e1, e2, e3) ->
-     (* TODO code pour if *) assert false
-  | TEfor (e1, e2) ->
-     (* TODO code pour for *) assert false
+  | TEif (e1, e2, e3) -> let a, b, c = new_label(), new_label(), new_label() in
+      (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne a) ++ (je b) ++ ret ++ (label a) ++ (expr env e2) ++ (jmp c) ++ ret ++ (label b) ++ (expr env e3) ++ ret ++ (jmp c) ++ (label c) ++ ret
+  | TEfor (e1, e2) ->  let a, b, c = new_label(), new_label(), new_label() in
+                       (label a) ++ (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++ (label b) ++ (expr env e2) ++ (jmp a) ++ ret ++ (label c) ++ ret
+     (* TODO code pour for *)
   | TEnew ty ->
      (* TODO code pour new S *) assert false
   | TEcall (f, el) -> call ("F_"^f.fn_name)
      (* TODO code pour appel fonction *)
   | TEdot (e1, {f_ofs=ofs}) ->
      (* TODO code pour e.f *) assert false
-  | TEvars _ ->
-     assert false (* fait dans block *)
+  | TEvars (lvars, lassigne) -> let rec stocke_vars lvars lassigne = match lvars, lassigne with
+                                | [], [] -> nop
+                                | var::lvars, valeur::lassigne -> (expr env valeur) ++ (pushq (reg rdi)) ++ (stocke_vars lvars lassigne)
+                                | _ -> failwith "La lise des variables et de leurs valeurs ne sont pas de même taille !"
+                                in stocke_vars lvars lassigne
+                                       (* fait dans block *)
   | TEreturn [] ->
     (* TODO code pour return e *) assert false
   | TEreturn [e1] ->
@@ -169,8 +185,22 @@ let file ?debug:(b=false) dl =
   debug := b;
   (* TODO calcul offset champs *)
   (* TODO code fonctions *) let funs = List.fold_left decl nop dl in
-  let str = ref
-"print_int:
+  { text =
+      globl "main" ++ label "main" ++
+      call "F_main" ++
+      call "Depiler" ++
+      xorq (reg rax) (reg rax) ++
+      ret ++
+      funs ++
+      inline "
+
+Depiler:
+        movq $0, %rdi
+        cmpq %rdi, %rbp
+        jne Depiler
+        ret
+
+print_int:
         movq    %rdi, %rsi
         movq    $S_int, %rdi
         xorq    %rax, %rax
@@ -183,7 +213,6 @@ print_string:
         ret
 
 print_bool:
-        movq $1, %rsi
         testq %rdi, %rdi
         jne print_true
         je print_false
@@ -199,53 +228,12 @@ print_false:
         call print_string
         ret
 
-" in for i = 1 to (!r) do
-       str:= !str ^
-"true_dans_r15_"^(string_of_int i)^":
-        movq $1, %r15
-        jmp L_"^(string_of_int i)^"
-        ret
-
-false_dans_r15_"^(string_of_int i)^":
-        movq $0, %r15
-        jmp L_"^(string_of_int i)^"
-        ret
-
-
-and_"^(string_of_int i)^":
-        testq %r13, %r13
-        je false_dans_r15_"^(string_of_int i)^"
-        jne and_aux_"^(string_of_int i)^"
-        ret
-
-and_aux_"^(string_of_int i)^":
-        testq %r14, %r14
-        je false_dans_r15_"^(string_of_int i)^"
-        jne true_dans_r15_"^(string_of_int i)^"
-        ret
-
-or_"^(string_of_int i)^":
-        testq %r13, %r13
-        je Laux_"^(string_of_int i)^"
-        jne true_dans_r15_"^(string_of_int i)^"
-        ret
-
-or_aux_"^(string_of_int i)^":
-        testq %r14, %r14
-        je false_dans_r15_"^(string_of_int i)^"
-        jne true_dans_r15_"^(string_of_int i)^"
-        ret
-" done;
-        { text = globl "main" ++ label "main" ++
-         call "F_main" ++
-         xorq (reg rax) (reg rax) ++
-         ret ++
-         funs ++ inline(!str);
-   (* TODO print pour d'autres valeurs *)
+"; (* TODO print pour d'autres valeurs *)
    (* TODO appel malloc de stdlib *)
     data =
       label "true" ++ string "true\n" ++
       label "false" ++ string "false\n" ++
       label "S_int" ++ string "%ld\n" ++
-      (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop) (* On ajoute récursivement (label l ++ string s à nop pour (l,s) dans strings *);
+      (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop) (* On ajoute récursivement (label l ++ string s à nop pour (l,s) dans strings *)
+    ;
   }
