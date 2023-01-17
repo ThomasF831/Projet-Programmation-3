@@ -142,10 +142,10 @@ let rec expr env e = match e.expr_desc with
   | TEassign (_, _) ->
      assert false
   | TEblock el -> let rec seq el env = match el with
-                  | [] -> nop
-                  | TEvars(vl,al)::el -> let code, new_env = assigne_vars vl al in code ++ (seq el new_env)
-                  | x::el -> (expr env x) ++ (seq el env)
-                  in seq el
+                  | [] -> nop, env
+                  | _ -> assert false
+                  | x::el -> let a,b = seq el env in (expr env x) ++ a, b
+                  in fst(seq el env)
   | TEif (e1, e2, e3) -> let a, b, c = new_label(), new_label(), new_label() in
       (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne a) ++ (je b) ++ ret ++ (label a) ++ (expr env e2) ++ (jmp c) ++ ret ++ (label b) ++ (expr env e3) ++ ret ++ (jmp c) ++ (label c) ++ ret
   | TEfor (e1, e2) ->  let a, b, c = new_label(), new_label(), new_label() in
@@ -167,10 +167,8 @@ let rec expr env e = match e.expr_desc with
                          | Dec -> movq (imm 1) (reg rsi) ++ subq (reg rsi) (reg rdi)
 
 and assigne_vars vl al env = match vl, al with
-  | [], [] -> env
-  | v::vl, a::al -> let code = (expr env a) ++ (inline (env.ofs_this^"(%rbp)") in
-                    let new_env = {exit_label = env.exit_label (* ? *); ofs_this = env.ofs_this - sizeof(v.v_typ); nb_locals = ref (env.(!nb_locals) + 1); next_local = env.next_local + 1} in
-                    code, new_env
+  | [], [] -> nop
+  | v::vl, a::al -> (expr env a) ++ (pushq (reg rdi))
   | _ -> failwith "La liste des variables et celle des valeurs à assigner n'ont pas la même longueur !"
 
 let function_ f e =
@@ -194,41 +192,34 @@ let file ?debug:(b=false) dl =
       ret ++
       funs ++
       inline "
-
 Depiler:
         movq $0, %rdi
         cmpq %rdi, %rbp
         jne Depiler
         ret
-
 print_int:
         movq    %rdi, %rsi
         movq    $S_int, %rdi
         xorq    %rax, %rax
         call    printf
         ret
-
 print_string:
         movq $0, %rax
         call printf
         ret
-
 print_bool:
         testq %rdi, %rdi
         jne print_true
         je print_false
         ret
-
 print_true:
         movq $true, %rdi
         call print_string
         ret
-
 print_false:
         movq $false, %rdi
         call print_string
         ret
-
 ";
    (* TODO appel malloc de stdlib *)
     data =
