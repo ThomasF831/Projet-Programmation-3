@@ -141,9 +141,10 @@ let rec expr env e = match e.expr_desc with
     (* TODO code pour x1,... := e1,... *) assert false
   | TEassign (_, _) ->
      assert false
-  | TEblock el -> let rec seq el = match el with
+  | TEblock el -> let rec seq el env = match el with
                   | [] -> nop
-                  | x::el -> (expr env x) ++ (seq el)
+                  | TEvars(vl,al)::el -> let code, new_env = assigne_vars vl al in code ++ (seq el new_env)
+                  | x::el -> (expr env x) ++ (seq el env)
                   in seq el
   | TEif (e1, e2, e3) -> let a, b, c = new_label(), new_label(), new_label() in
       (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne a) ++ (je b) ++ ret ++ (label a) ++ (expr env e2) ++ (jmp c) ++ ret ++ (label b) ++ (expr env e3) ++ ret ++ (jmp c) ++ (label c) ++ ret
@@ -152,29 +153,29 @@ let rec expr env e = match e.expr_desc with
      (* TODO code pour for *)
   | TEnew ty ->
      (* TODO code pour new S *) assert false
-  | TEcall (f, el) -> call ("F_"^f.fn_name)
-     (* TODO code pour appel fonction *)
+  | TEcall (f, el) -> call ("F_"^f.fn_name) ++ (movq (reg rax) (reg rdi))
   | TEdot (e1, {f_ofs=ofs}) ->
      (* TODO code pour e.f *) assert false
-  | TEvars (lvars, lassigne) -> let rec stocke_vars lvars lassigne = match lvars, lassigne with
-                                | [], [] -> nop
-                                | var::lvars, valeur::lassigne -> (expr env valeur) ++ (pushq (reg rdi)) ++ (stocke_vars lvars lassigne)
-                                | _ -> failwith "La lise des variables et de leurs valeurs ne sont pas de même taille !"
-                                in stocke_vars lvars lassigne
+  | TEvars (lvars, lassigne) -> assert false
                                        (* fait dans block *)
-  | TEreturn [] ->
-    (* TODO code pour return e *) assert false
-  | TEreturn [e1] ->
-    (* TODO code pour return e1,... *) assert false
+  | TEreturn [] -> nop
+  | TEreturn [e1] -> (expr env e1) ++ (movq (reg rdi) (reg rax))
   | TEreturn _ ->
      assert false
   | TEincdec (e1, op) -> match op with
                          | Inc -> movq (imm 1) (reg rsi) ++ addq (reg rsi) (reg rdi)
                          | Dec -> movq (imm 1) (reg rsi) ++ subq (reg rsi) (reg rdi)
-(* TODO code pour return e++, e-- *)
+
+and assigne_vars vl al env = match vl, al with
+  | [], [] -> env
+  | v::vl, a::al -> let code = (expr env a) ++ (inline (env.ofs_this^"(%rbp)") in
+                    let new_env = {exit_label = env.exit_label (* ? *); ofs_this = env.ofs_this - sizeof(v.v_typ); nb_locals = ref (env.(!nb_locals) + 1); next_local = env.next_local + 1} in
+                    code, new_env
+  | _ -> failwith "La liste des variables et celle des valeurs à assigner n'ont pas la même longueur !"
+
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
-  (* TODO code pour fonction *) let s = f.fn_name in
+  let s = f.fn_name in
   label ("F_" ^ s) ++ (expr strings e) ++ ret
 
 let decl code = function
@@ -228,7 +229,7 @@ print_false:
         call print_string
         ret
 
-"; (* TODO print pour d'autres valeurs *)
+";
    (* TODO appel malloc de stdlib *)
     data =
       label "true" ++ string "true\n" ++
