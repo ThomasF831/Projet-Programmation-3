@@ -67,41 +67,42 @@ let compile_bool f =
   movq (imm 0) (reg rdi) ++ jmp l_end ++
   label l_true ++ movq (imm 1) (reg rdi) ++ label l_end
 
-let rec expr env e = match e.expr_desc with
-  | TEskip ->
-    nop
-  | TEconstant (Cbool true) ->
-    movq (imm 1) (reg rdi)
-  | TEconstant (Cbool false) ->
-    movq (imm 0) (reg rdi)
-  | TEconstant (Cint x) ->
-    movq (imm64 x) (reg rdi)
-  | TEnil ->
-    xorq (reg rdi) (reg rdi)
-  | TEconstant (Cstring s) ->
-     let l = (alloc_string s) in
-     movq (ilab l) (reg rdi)
-  | TEbinop (Band, e1, e2) -> let a, b, c, d = new_label(), new_label(), new_label(), new_label() in
-                              (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne a) ++ (je c) ++ ret ++
-                                (label a) ++ (expr env e2) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++
-                                (label b) ++ (movq (imm 1) (reg rdi)) ++ (jmp d) ++ ret ++
-                                (label c) ++ (movq (imm 0) (reg rdi)) ++ (jmp d) ++ ret ++
-                                (label d)
-  | TEbinop (Bor, e1, e2) -> let a, b, c, d = new_label(), new_label(), new_label(), new_label() in
-                              (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je a) ++ ret ++
-                                (label a) ++ (expr env e2) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++
-                                (label b) ++ (movq (imm 1) (reg rdi)) ++ (jmp d) ++ ret ++
-                                (label c) ++ (movq (imm 0) (reg rdi)) ++ (jmp d) ++ ret ++
-                                (label d)
+let addr = ref (-8) in
+    let rec expr env e = in match e.expr_desc with
+                            | TEskip ->
+                               nop
+                            | TEconstant (Cbool true) ->
+                               movq (imm 1) (reg rdi)
+                            | TEconstant (Cbool false) ->
+                               movq (imm 0) (reg rdi)
+                            | TEconstant (Cint x) ->
+                               movq (imm64 x) (reg rdi)
+                            | TEnil ->
+                               xorq (reg rdi) (reg rdi)
+                            | TEconstant (Cstring s) ->
+                               let l = (alloc_string s) in
+                               movq (ilab l) (reg rdi)
+                            | TEbinop (Band, e1, e2) -> let a, b, c, d = new_label(), new_label(), new_label(), new_label() in
+                                                        (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne a) ++ (je c) ++ ret ++
+                                                          (label a) ++ (expr env e2) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++
+                                                          (label b) ++ (movq (imm 1) (reg rdi)) ++ (jmp d) ++ ret ++
+                                                          (label c) ++ (movq (imm 0) (reg rdi)) ++ (jmp d) ++ ret ++
+                                                          (label d)
+                            | TEbinop (Bor, e1, e2) -> let a, b, c, d = new_label(), new_label(), new_label(), new_label() in
+                                                       (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je a) ++ ret ++
+                                                         (label a) ++ (expr env e2) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++
+                                                         (label b) ++ (movq (imm 1) (reg rdi)) ++ (jmp d) ++ ret ++
+                                                         (label c) ++ (movq (imm 0) (reg rdi)) ++ (jmp d) ++ ret ++
+                                                         (label d)
   | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) -> let a, b, c = new_label(), new_label(), new_label() in
                                                      let jumps_op = begin match op with
-                                                       | Blt -> jl, jge
-                                                       | Ble -> jle, jg
-                                                       | Bgt -> jg, jle
-                                                       | Bge -> jge, jl
-                                                       | _ -> failwith "L'opération binaire n'est pas une comparaison d'entiers"
+                                                                    | Blt -> jl, jge
+                                                                    | Ble -> jle, jg
+                                                                    | Bgt -> jg, jle
+                                                                    | Bge -> jge, jl
+                                                                    | _ -> failwith "L'opération binaire n'est pas une comparaison d'entiers"
                                                                     end
-                                                        in (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++
+                                                     in (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++
                                                           (cmpq (reg rsi) (reg rdi)) ++ ((fst jumps_op) a) ++ ((snd jumps_op) b) ++
                                                           (label a) ++ (movq (imm 1) (reg rdi)) ++ (jmp c) ++ ret ++
                                                           (label b) ++ (movq (imm 0) (reg rdi)) ++ (jmp c) ++ ret ++
@@ -120,21 +121,20 @@ let rec expr env e = match e.expr_desc with
   | TEunop (Uneg, e1) -> (expr env e1) ++ (negq (reg rdi))
   | TEunop (Unot, e1) -> (expr env e1) ++ (movq (imm 1) (reg rsi)) ++ (subq (reg rdi) (reg rsi)) ++ (movq (reg rsi) (reg rdi))
   | TEunop (Uamp, e1) ->
-    (* TODO code pour & *) assert false
+     (* TODO code pour & *) assert false
   | TEunop (Ustar, e1) ->
     (* TODO code pour * *) assert false
   | TEprint el ->
      let affiche x = match x.expr_typ with
        | Tint -> (expr env x) ++ (call "print_int")
        | Tstring -> (expr env x) ++ (call "print_string")
-
        | Tbool -> (expr env x) ++ (call "print_bool")
        | _ -> nop
      in let rec affiche_liste q = match q with
        | [] -> nop
        | x::q -> let cas = affiche_liste q in (affiche  x) ++ cas
      in affiche_liste el
-  | TEident x -> (comment (string_of_int x.v_addr)) ++ inline ("\tmovq "^(string_of_int (Hashtbl.find x.v_id)^"(%rbp), %rdi\n") ++ (popq rbp)
+  | TEident x -> inline ("\tmovq "^(string_of_int (Hashtbl.find adresses x.v_id)^"(%rbp), %rdi\n")) ++ (popq rbp)
     (* TODO code pour x *)
   | TEassign ([{expr_desc=TEident x}], [e1]) ->
     (* TODO code pour x := e *) assert false
@@ -144,7 +144,12 @@ let rec expr env e = match e.expr_desc with
      assert false
   | TEblock el -> let rec seq el env = begin match el with
                   | [] -> nop
-                  | {expr_desc = TEvars (vl,al); expr_typ = Tmany [] }::el -> (assigne_vars vl al env) ++ (seq el env)
+                  | {expr_desc = TEvars (vl,al); expr_typ = Tmany [] }::el ->
+                     fun vl al env -> let rec aux vl al env =  match vl, al with
+                                        | [], [] -> nop
+                                        | v::vl, a::al -> Hashtbl.add adresses v.v_id !addr; addr := !addr - sizeof(v.v_typ); (expr env a) ++ (comment (string_of_int v.v_addr)) ++ (pushq (reg rdi)) ++ (aux vl al env)
+                                        | _ -> failwith "La liste des variables et celle des valeurs à assigner n'ont pas la même longueur !"
+                                      in (aux vl al env) ++ (seq el env)
                   | x::el -> (expr env x) ++ seq el env
                                        end
                   in seq el env
@@ -167,12 +172,6 @@ let rec expr env e = match e.expr_desc with
   | TEincdec (e1, op) -> match op with
                          | Inc -> movq (imm 1) (reg rsi) ++ addq (reg rsi) (reg rdi)
                          | Dec -> movq (imm 1) (reg rsi) ++ subq (reg rsi) (reg rdi)
-and assigne_vars = let addr = ref (-8) in
-                   fun vl al env -> let rec aux vl al env =  match vl, al with
-                                            | [], [] -> nop
-                                            | v::vl, a::al -> Hashtbl.add adresses v.v_id !addr; addr := !addr - sizeof(v.v_typ); (expr env a) ++ (comment (string_of_int v.v_addr)) ++ (pushq (reg rdi)) ++ (aux vl al env)
-                                            | _ -> failwith "La liste des variables et celle des valeurs à assigner n'ont pas la même longueur !"
-                                    in aux vl al env
 
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
@@ -200,7 +199,6 @@ let file ?debug:(b=false) dl =
       ret ++
       funs ++
       inline "
-
 print_int:
         movq    %rdi, %rsi
         movq    $S_int, %rdi
