@@ -30,6 +30,7 @@ exception Anomaly of string
 let debug = ref false
 
 let strings = Hashtbl.create 32
+let adresses = Hashtbl.create 2
 let alloc_string =
   let r = ref 0 in
   fun s ->
@@ -65,9 +66,6 @@ let compile_bool f =
   f l_true ++
   movq (imm 0) (reg rdi) ++ jmp l_end ++
   label l_true ++ movq (imm 1) (reg rdi) ++ label l_end
-
-let nombre_vars = ref 0;;
-let pile_nombre_vars = Stack.create ();;
 
 let rec expr env e = match e.expr_desc with
   | TEskip ->
@@ -136,7 +134,7 @@ let rec expr env e = match e.expr_desc with
        | [] -> nop
        | x::q -> let cas = affiche_liste q in (affiche  x) ++ cas
      in affiche_liste el
-  | TEident x -> (pushq (reg rbp)) ++ (movq (reg rsp) (reg rbp)) ++ inline ("\tmovq "^(string_of_int x.v_addr)^"(%rbp), %rdi\n") ++ (popq rbp)
+  | TEident x -> (comment (string_of_int x.v_addr)) ++ inline ("\tmovq "^(string_of_int (Hashtbl.find x.v_id)^"(%rbp), %rdi\n") ++ (popq rbp)
     (* TODO code pour x *)
   | TEassign ([{expr_desc=TEident x}], [e1]) ->
     (* TODO code pour x := e *) assert false
@@ -157,7 +155,7 @@ let rec expr env e = match e.expr_desc with
      (* TODO code pour for *)
   | TEnew ty ->
      (* TODO code pour new S *) assert false
-  | TEcall (f, el) -> Stack.push !nombre_vars pile_nombre_vars; call ("F_"^f.fn_name) ++ (movq (reg rax) (reg rdi))
+  | TEcall (f, el) -> call ("F_"^f.fn_name) ++ (movq (reg rax) (reg rdi))
   | TEdot (e1, {f_ofs=ofs}) ->
      (* TODO code pour e.f *) assert false
   | TEvars (lvars, lassigne) -> assert false
@@ -169,22 +167,23 @@ let rec expr env e = match e.expr_desc with
   | TEincdec (e1, op) -> match op with
                          | Inc -> movq (imm 1) (reg rsi) ++ addq (reg rsi) (reg rdi)
                          | Dec -> movq (imm 1) (reg rsi) ++ subq (reg rsi) (reg rdi)
-
-and assigne_vars = let addr = ref (-1) in
-                   fun vl al env -> match vl, al with
-                                   | [], [] -> nop
-                                   | v::vl, a::al -> v.v_addr <- !addr; addr := !addr - sizeof(v.v_typ); (expr env a) ++ (pushq (reg rdi))
-                                   | _ -> failwith "La liste des variables et celle des valeurs à assigner n'ont pas la même longueur !"
+and assigne_vars = let addr = ref (-8) in
+                   fun vl al env -> let rec aux vl al env =  match vl, al with
+                                            | [], [] -> nop
+                                            | v::vl, a::al -> Hashtbl.add adresses v.v_id !addr; addr := !addr - sizeof(v.v_typ); (expr env a) ++ (comment (string_of_int v.v_addr)) ++ (pushq (reg rdi)) ++ (aux vl al env)
+                                            | _ -> failwith "La liste des variables et celle des valeurs à assigner n'ont pas la même longueur !"
+                                    in aux vl al env
 
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
   let s = f.fn_name in
+  let nombre_vars = ref 0 in
   let dep = ref nop in
-  for i = 0 to  !nombre_vars do
+  let code = expr strings e in
+  for i = 0 to  !nombre_vars-1 do
     dep := !dep ++ (popq rdx)
   done;
-  nombre_vars := Stack.pop pile_nombre_vars;
-  label ("F_" ^ s) ++ (expr strings e) ++ (movq (reg rdi) (reg r13)) ++ (!dep) ++ ret
+  label ("F_" ^ s) ++ (pushq (reg rbp)) ++ (movq (reg rsp) (reg rbp)) ++ code ++ (!dep) ++ (popq rbp) ++ ret
 
 let decl code = function
   | TDfunction (f, e) -> code ++ function_ f e
