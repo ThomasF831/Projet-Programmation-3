@@ -66,6 +66,9 @@ let compile_bool f =
   movq (imm 0) (reg rdi) ++ jmp l_end ++
   label l_true ++ movq (imm 1) (reg rdi) ++ label l_end
 
+let nombre_vars = ref 0;;
+let pile_nombre_vars = Stack.create ();;
+
 let rec expr env e = match e.expr_desc with
   | TEskip ->
     nop
@@ -133,7 +136,7 @@ let rec expr env e = match e.expr_desc with
        | [] -> nop
        | x::q -> let cas = affiche_liste q in (affiche  x) ++ cas
      in affiche_liste el
-  | TEident x -> inline ("\tmovq "^(string_of_int x.v_addr)^"(%rbp), %rdi\n")
+  | TEident x -> (pushq (reg rbp)) ++ (movq (reg rsp) (reg rbp)) ++ inline ("\tmovq "^(string_of_int x.v_addr)^"(%rbp), %rdi\n") ++ (popq rbp)
     (* TODO code pour x *)
   | TEassign ([{expr_desc=TEident x}], [e1]) ->
     (* TODO code pour x := e *) assert false
@@ -141,11 +144,12 @@ let rec expr env e = match e.expr_desc with
     (* TODO code pour x1,... := e1,... *) assert false
   | TEassign (_, _) ->
      assert false
-  | TEblock el -> let rec seq el env = match el with
-                  | [] -> nop, env
-                  | _ -> assert false
-                  | x::el -> let a,b = seq el env in (expr env x) ++ a, b
-                  in fst(seq el env)
+  | TEblock el -> let rec seq el env = begin match el with
+                  | [] -> nop
+                  | {expr_desc = TEvars (vl,al); expr_typ = Tmany [] }::el -> (assigne_vars vl al env) ++ (seq el env)
+                  | x::el -> (expr env x) ++ seq el env
+                                       end
+                  in seq el env
   | TEif (e1, e2, e3) -> let a, b, c = new_label(), new_label(), new_label() in
       (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne a) ++ (je b) ++ ret ++ (label a) ++ (expr env e2) ++ (jmp c) ++ ret ++ (label b) ++ (expr env e3) ++ ret ++ (jmp c) ++ (label c) ++ ret
   | TEfor (e1, e2) ->  let a, b, c = new_label(), new_label(), new_label() in
@@ -153,7 +157,7 @@ let rec expr env e = match e.expr_desc with
      (* TODO code pour for *)
   | TEnew ty ->
      (* TODO code pour new S *) assert false
-  | TEcall (f, el) -> call ("F_"^f.fn_name) ++ (movq (reg rax) (reg rdi))
+  | TEcall (f, el) -> Stack.push !nombre_vars pile_nombre_vars; call ("F_"^f.fn_name) ++ (movq (reg rax) (reg rdi))
   | TEdot (e1, {f_ofs=ofs}) ->
      (* TODO code pour e.f *) assert false
   | TEvars (lvars, lassigne) -> assert false
@@ -166,15 +170,21 @@ let rec expr env e = match e.expr_desc with
                          | Inc -> movq (imm 1) (reg rsi) ++ addq (reg rsi) (reg rdi)
                          | Dec -> movq (imm 1) (reg rsi) ++ subq (reg rsi) (reg rdi)
 
-and assigne_vars vl al env = match vl, al with
-  | [], [] -> nop
-  | v::vl, a::al -> (expr env a) ++ (pushq (reg rdi))
-  | _ -> failwith "La liste des variables et celle des valeurs à assigner n'ont pas la même longueur !"
+and assigne_vars = let addr = ref (-1) in
+                   fun vl al env -> match vl, al with
+                                   | [], [] -> nop
+                                   | v::vl, a::al -> v.v_addr <- !addr; addr := !addr - sizeof(v.v_typ); (expr env a) ++ (pushq (reg rdi))
+                                   | _ -> failwith "La liste des variables et celle des valeurs à assigner n'ont pas la même longueur !"
 
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
   let s = f.fn_name in
-  label ("F_" ^ s) ++ (expr strings e) ++ ret
+  let dep = ref nop in
+  for i = 0 to  !nombre_vars do
+    dep := !dep ++ (popq rdx)
+  done;
+  nombre_vars := Stack.pop pile_nombre_vars;
+  label ("F_" ^ s) ++ (expr strings e) ++ (movq (reg rdi) (reg r13)) ++ (!dep) ++ ret
 
 let decl code = function
   | TDfunction (f, e) -> code ++ function_ f e
@@ -187,16 +197,11 @@ let file ?debug:(b=false) dl =
   { text =
       globl "main" ++ label "main" ++
       call "F_main" ++
-      call "Depiler" ++
       xorq (reg rax) (reg rax) ++
       ret ++
       funs ++
       inline "
-Depiler:
-        movq $0, %rdi
-        cmpq %rdi, %rbp
-        jne Depiler
-        ret
+
 print_int:
         movq    %rdi, %rsi
         movq    $S_int, %rdi
