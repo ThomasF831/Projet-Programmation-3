@@ -78,7 +78,7 @@ let rec expr env e = match e.expr_desc with
                             | TEconstant (Cbool false) ->
                                movq (imm 0) (reg rdi)
                             | TEconstant (Cint x) ->
-                               movq (imm64 x) (reg rdi)
+                               movq (imm64 x) (reg rdi) ++
                             | TEnil ->
                                xorq (reg rdi) (reg rdi)
                             | TEconstant (Cstring s) ->
@@ -162,7 +162,16 @@ let rec expr env e = match e.expr_desc with
      (* TODO code pour for *)
   | TEnew ty ->
      (* TODO code pour new S *) assert false
-  | TEcall (f, el) -> call ("F_"^f.fn_name) ++ (movq (reg rax) (reg rdi))
+  | TEcall (f, el) -> let rec aux vl el = match vl, el with
+                        | [], [] -> nop
+                        | v::vl, e::el -> nombre_vars := !nombre_vars + 1;
+                                          let valeur = expr env e in valeur ++
+                                                                       (try (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses v.v_id))^"(%rbp)\n"))
+                                                                       with Not_found -> (Hashtbl.add adresses v.v_id !addr; addr := !addr - sizeof(v.v_typ); (expr env e) ++ (pushq (reg rdi))))
+                                                                     ++ (aux vl el)
+                        | _ -> failwith "Le nombe d'arguments n'est pas celui attendu!"
+                      in let decl_vars = aux f.fn_params el in
+                      decl_vars ++ call ("F_"^f.fn_name) ++ (movq (reg rax) (reg rdi))
   | TEdot (e1, {f_ofs=ofs}) ->
      (* TODO code pour e.f *) assert false
   | TEvars (lvars, lassigne) -> assert false
