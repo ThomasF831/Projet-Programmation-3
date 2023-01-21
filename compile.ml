@@ -67,8 +67,10 @@ let compile_bool f =
   movq (imm 0) (reg rdi) ++ jmp l_end ++
   label l_true ++ movq (imm 1) (reg rdi) ++ label l_end
 
-let addr = ref (-8) in
-    let rec expr env e = in match e.expr_desc with
+let nombre_vars = ref 0;;
+let addr = ref (-8);;
+
+let rec expr env e = match e.expr_desc with
                             | TEskip ->
                                nop
                             | TEconstant (Cbool true) ->
@@ -134,7 +136,7 @@ let addr = ref (-8) in
        | [] -> nop
        | x::q -> let cas = affiche_liste q in (affiche  x) ++ cas
      in affiche_liste el
-  | TEident x -> inline ("\tmovq "^(string_of_int (Hashtbl.find adresses x.v_id)^"(%rbp), %rdi\n")) ++ (popq rbp)
+  | TEident x -> inline ("\tmovq "^(string_of_int (Hashtbl.find adresses x.v_id)^"(%rbp), %rdi\n"))
     (* TODO code pour x *)
   | TEassign ([{expr_desc=TEident x}], [e1]) ->
     (* TODO code pour x := e *) assert false
@@ -144,12 +146,12 @@ let addr = ref (-8) in
      assert false
   | TEblock el -> let rec seq el env = begin match el with
                   | [] -> nop
-                  | {expr_desc = TEvars (vl,al); expr_typ = Tmany [] }::el ->
-                     fun vl al env -> let rec aux vl al env =  match vl, al with
-                                        | [], [] -> nop
-                                        | v::vl, a::al -> Hashtbl.add adresses v.v_id !addr; addr := !addr - sizeof(v.v_typ); (expr env a) ++ (comment (string_of_int v.v_addr)) ++ (pushq (reg rdi)) ++ (aux vl al env)
-                                        | _ -> failwith "La liste des variables et celle des valeurs à assigner n'ont pas la même longueur !"
-                                      in (aux vl al env) ++ (seq el env)
+                  | {expr_desc = TEvars (vl,al); expr_typ = Tmany [] }::el -> let rec aux vl al env =  match vl, al with
+                                                                                | [], [] -> nop
+                                                                                | v::vl, a::al -> nombre_vars := !nombre_vars + 1; Hashtbl.add adresses v.v_id !addr; addr := !addr - sizeof(v.v_typ); (expr env a) ++ (pushq (reg rdi)) ++ (aux vl al env)
+                                                                                | _ -> failwith "La liste des variables et celle des valeurs à assigner n'ont pas la même longueur !"
+                                                                              in let code = aux vl al env in
+                                                                                 code ++ (seq el env)
                   | x::el -> (expr env x) ++ seq el env
                                        end
                   in seq el env
@@ -172,16 +174,17 @@ let addr = ref (-8) in
   | TEincdec (e1, op) -> match op with
                          | Inc -> movq (imm 1) (reg rsi) ++ addq (reg rsi) (reg rdi)
                          | Dec -> movq (imm 1) (reg rsi) ++ subq (reg rsi) (reg rdi)
+;;
 
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
   let s = f.fn_name in
-  let nombre_vars = ref 0 in
   let dep = ref nop in
   let code = expr strings e in
   for i = 0 to  !nombre_vars-1 do
     dep := !dep ++ (popq rdx)
   done;
+  nombre_vars := 0;
   label ("F_" ^ s) ++ (pushq (reg rbp)) ++ (movq (reg rsp) (reg rbp)) ++ code ++ (!dep) ++ (popq rbp) ++ ret
 
 let decl code = function
