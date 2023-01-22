@@ -158,7 +158,7 @@ let rec expr env e = match e.expr_desc with
   | TEif (e1, e2, e3) -> let a, b, c = new_label(), new_label(), new_label() in
       (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne a) ++ (je b) ++ ret ++ (label a) ++ (expr env e2) ++ (jmp c) ++ ret ++ (label b) ++ (expr env e3) ++ ret ++ (jmp c) ++ (label c) ++ ret
   | TEfor (e1, e2) ->  let a, b, c = new_label(), new_label(), new_label() in
-                       (label a) ++ (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++ (label b) ++ (expr env e2) ++ (jmp a) ++ ret ++ (label c) ++ ret
+                       (jmp a) ++ (label a) ++ (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++ (label b) ++ (expr env e2) ++ (jmp a) ++ ret ++ (label c) ++ ret
      (* TODO code pour for *)
   | TEnew ty ->
      (* TODO code pour new S *) assert false
