@@ -31,7 +31,7 @@ let debug = ref false
 
 let strings = Hashtbl.create 32
 let adresses = Hashtbl.create 2
-(* let pointeurs = Hashtbl.create 2 *)
+
 let alloc_string =
   let r = ref 0 in
   fun s ->
