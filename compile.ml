@@ -118,8 +118,14 @@ let rec expr env e = match e.expr_desc with
                                                                                      | _ -> nop
                                                                                      end in
                                                                 (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++ (opq (reg rsi) (reg rdi))
-  | TEbinop (Beq | Bne as op, e1, e2) -> let _ = op in
-    (* TODO code pour egalite toute valeur *) assert false
+  | TEbinop (Beq | Bne as op, e1, e2) -> let a, b, c = new_label(), new_label(), new_label() in
+                                         (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++
+                                           (cmpq (reg rsi) (reg rdi)) ++ begin
+                                             if op = Beq then (je a) ++ (jne b)
+                                             else (jne a) ++ (je b) end ++
+                                           (label a) ++ (movq (imm 1) (reg rdi)) ++ (jmp c) ++ ret ++
+                                           (label b) ++ (movq (imm 0) (reg rdi)) ++ (jmp c) ++ ret ++
+                                           (label c)
   | TEunop (Uneg, e1) -> (expr env e1) ++ (negq (reg rdi))
   | TEunop (Unot, e1) -> (expr env e1) ++ (movq (imm 1) (reg rsi)) ++ (subq (reg rdi) (reg rsi)) ++ (movq (reg rsi) (reg rdi))
   | TEunop (Uamp, e1) ->
@@ -137,13 +143,15 @@ let rec expr env e = match e.expr_desc with
        | x::q -> let cas = affiche_liste q in (affiche  x) ++ cas
      in affiche_liste el
   | TEident x -> inline ("\tmovq "^(string_of_int (Hashtbl.find adresses x.v_id)^"(%rbp), %rdi\n"))
-    (* TODO code pour x *)
-  | TEassign ([{expr_desc=TEident x}], [e1]) ->
-    (* TODO code pour x := e *) assert false
-  | TEassign ([lv], [e1]) ->
-    (* TODO code pour x1,... := e1,... *) assert false
-  | TEassign (_, _) ->
-     assert false
+  | TEassign ([{expr_desc=TEident x}], [e1]) -> (expr env e1) ++ (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses x.v_id))^"(%rbp)\n"))
+  | TEassign (lv, le) -> let rec evalue_valeurs l = match l with
+                           | [] -> nop
+                           | e::l -> (expr env e) ++ (pushq (reg rdi)) ++ (evalue_valeurs l)
+                         in let rec assigne_valeurs l = match l with
+                              | [] -> nop
+                              | ({expr_desc=TEident v})::l -> (popq rdi) ++ (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses v.v_id))^"(%rbp)\n")) ++ (assigne_valeurs l)
+                              | _ -> failwith "Tentative d'assigner une expression à une expression qui n'est pas une variable!"
+                            in (evalue_valeurs le) ++ (assigne_valeurs (List.rev lv))
   | TEblock el -> let rec seq el env = begin match el with
                   | [] -> nop
                   | {expr_desc = TEvars (vl,al); expr_typ = Tmany [] }::el -> let rec aux vl al env =  match vl, al with
@@ -159,7 +167,6 @@ let rec expr env e = match e.expr_desc with
       (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne a) ++ (je b) ++ (label a) ++ (expr env e2) ++ (jmp c) ++ (label b) ++ (expr env e3) ++ (jmp c) ++ (label c)
   | TEfor (e1, e2) ->  let a, b, c = new_label(), new_label(), new_label() in
                        (jmp a) ++ (label a) ++ (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++ (label b) ++ (expr env e2) ++ (jmp a) ++ ret ++ (label c) ++ ret
-     (* TODO code pour for *)
   | TEnew ty ->
      (* TODO code pour new S *) assert false
   | TEcall (f, el) -> let rec aux vl el = match vl, el with
