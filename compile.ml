@@ -30,7 +30,12 @@ exception Anomaly of string
 let debug = ref false
 
 let strings = Hashtbl.create 32
+
+(* Dictionnaire contenant les couples (nom de label, chaîne de caractères) des labels de .data contenant les chaînes de caractères *)
+
 let adresses = Hashtbl.create 2
+
+(* Dictionnaire contenant les couples (v_id, adresse) des variables *)
 
 let alloc_string =
   let r = ref 0 in
@@ -56,6 +61,8 @@ type env = {
   next_local: int; (* 0, 1, ... *)
 }
 
+(* Je n'ai pas compris à quoi ça sert *)
+
 let empty_env =
   { exit_label = ""; ofs_this = -1; nb_locals = ref 0; next_local = 0 }
 
@@ -68,11 +75,18 @@ let compile_bool f =
   movq (imm 0) (reg rdi) ++ jmp l_end ++
   label l_true ++ movq (imm 1) (reg rdi) ++ label l_end
 
+(* Cela non plus *)
+
 let nombre_vars = ref 0;;
+
+(* Compte le nombre de variables empilées sur la pile pour l'appel de fonction courant afin de pouvoir toutes les dépiler avant le ret sans quoi on obtient des erreurs "segmentation fault *)
+
 let addr = ref (-8);;
-let id_pointeur = ref (-1);;
+
+(* Contient l'adresse par rapport à %rbp à laquelle va être empilée la prochaine variable *)
 
 let rec expr env e = match e.expr_desc with
+(* Génère le code associé à l'expression e *)
                             | TEskip ->
                                nop
                             | TEconstant (Cbool true) ->
@@ -98,6 +112,7 @@ let rec expr env e = match e.expr_desc with
                                                          (label b) ++ (movq (imm 1) (reg rdi)) ++ (jmp d) ++ ret ++
                                                          (label c) ++ (movq (imm 0) (reg rdi)) ++ (jmp d) ++ ret ++
                                                          (label d)
+(* Pour les deux opérations du dessus j'ai adapté le code de if. Les labels du milieu correspondent à un code qui stocke vrai/faux dans %rdi. On teste si la première expression permet de connaître la valeur de l'opération et le cas échéant on fait directement un saut aux labels qui mettent vrai/faux dans %rdi sans tester la deuxième expression. *)
                             | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) -> let a, b, c = new_label(), new_label(), new_label() in
                                                      let jumps_op = begin match op with
                                                                     | Blt -> jl, jge
@@ -111,6 +126,7 @@ let rec expr env e = match e.expr_desc with
                                                           (label a) ++ (movq (imm 1) (reg rdi)) ++ (jmp c) ++ ret ++
                                                           (label b) ++ (movq (imm 0) (reg rdi)) ++ (jmp c) ++ ret ++
                                                           (label c)
+(* Ces comparaisons peuvent toutes se déterminer en observant le(s) signe(s) de la différence. On peut donc réutiliser le schéma du cas précédent avec les sauts conditionnels adéquats. *)
                             | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) -> let opq = fun x y -> begin match op with
                                                                                      | Badd -> addq x y
                                                                                      | Bsub -> subq x y
@@ -120,6 +136,7 @@ let rec expr env e = match e.expr_desc with
                                                                                      | _ -> nop
                                                                                      end in
                                                                 (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++ (opq (reg rsi) (reg rdi))
+(* Il s'agit essentiellement de réutiliser les fonctions assembleurs déjà existantes. On empile les résultats des expressions pour que la valeur de la première ne soit pas modifiée lors du calcul de la seconde. *)
                             | TEbinop (Beq | Bne as op, e1, e2) -> let a, b, c = new_label(), new_label(), new_label() in
                                                                    (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++
                                                                      (cmpq (reg rsi) (reg rdi)) ++ begin
@@ -128,11 +145,16 @@ let rec expr env e = match e.expr_desc with
                                                                      (label a) ++ (movq (imm 1) (reg rdi)) ++ (jmp c) ++ ret ++
                                                                      (label b) ++ (movq (imm 0) (reg rdi)) ++ (jmp c) ++ ret ++
                                                                      (label c)
+(* C'est la même chose que pour les comparaisons mais ça ne fonctionne pas sur les chaînes de caractères. *)
                             | TEunop (Uneg, e1) -> (expr env e1) ++ (negq (reg rdi))
+(* C'est la même chose que pour les opérations arithmétiques précédentes. *)
                             | TEunop (Unot, e1) -> (expr env e1) ++ (movq (imm 1) (reg rsi)) ++ (subq (reg rdi) (reg rsi)) ++ (movq (reg rsi) (reg rdi))
-                            | TEunop (Uamp, e1) -> assert false
-                            | TEunop (Ustar, e1) -> nombre_vars := !nombre_vars + 1; Hashtbl.add adresses (!id_pointeur) (!addr); addr := !addr - sizeof(e1.expr_typ); id_pointeur := !id_pointeur - 1;
-                                                    (expr env e1) ++ (pushq (reg rdi)) ++ (movq (imm !addr) (reg rdi))
+(* Ici la fonction correspondante en assembleur ne fonctionnait pas comme je le souhaitait. J'ai donc réécrit un code assembleur qui fait ce que je souhaite. *)
+                            | TEunop (Uamp, e1) -> begin match e1 with
+                                                   | {expr_desc = TEident x} -> (movq (imm (Hashtbl.find adresses x.v_id)) (reg rdi))
+                                                   | _ -> assert false
+                                                   end
+                            | TEunop (Ustar, e1) -> (expr env e1) ++ (movq (reg rdi) (reg rsi)) ++ (movq (reg rbp) (reg rdi)) ++ (addq (reg rsi) (reg rdi)) ++ (inline "\tmovq (%rdi), %rdi\n")
                             | TEprint el ->
                                let affiche x = match x.expr_typ with
                                  | Tint -> (expr env x) ++ (call "print_int")
