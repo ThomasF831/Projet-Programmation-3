@@ -278,7 +278,7 @@ print_false:
         call print_string
         ret
 ";
-(* Pour print_string, il s'agit d'un simple appel à printf qui affiche la chaîne de caractère stockée dans %rdi. Pour print_bool, on fait un saut à une fonction qui affiche "true" si le booléen contenu dans %rdi est vrai ou à une fonction qui affiche "false" sinon.
+(* Pour print_string, il s'agit d'un simple appel à printf qui affiche la chaîne de caractère stockée dans %rdi. Pour print_bool, on fait un saut à une fonction qui affiche "true" si le booléen contenu dans %rdi est vrai ou à une fonction qui affiche "false" sinon. *)
    (* TODO appel malloc de stdlib *)
     data =
       label "true" ++ string "true\n" ++
