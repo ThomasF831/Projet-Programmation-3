@@ -31,6 +31,7 @@ let debug = ref false
 
 let strings = Hashtbl.create 32
 let adresses = Hashtbl.create 2
+(* let pointeurs = Hashtbl.create 2 *)
 let alloc_string =
   let r = ref 0 in
   fun s ->
@@ -129,7 +130,7 @@ let rec expr env e = match e.expr_desc with
                                                                      (label c)
                             | TEunop (Uneg, e1) -> (expr env e1) ++ (negq (reg rdi))
                             | TEunop (Unot, e1) -> (expr env e1) ++ (movq (imm 1) (reg rsi)) ++ (subq (reg rdi) (reg rsi)) ++ (movq (reg rsi) (reg rdi))
-                            | TEunop (Uamp, e1) -> (expr env e1) ++ 
+                            | TEunop (Uamp, e1) -> assert false
                             | TEunop (Ustar, e1) -> nombre_vars := !nombre_vars + 1; Hashtbl.add adresses (!id_pointeur) (!addr); addr := !addr - sizeof(e1.expr_typ); id_pointeur := !id_pointeur - 1;
                                                     (expr env e1) ++ (pushq (reg rdi)) ++ (movq (imm !addr) (reg rdi))
                             | TEprint el ->
@@ -177,8 +178,8 @@ let rec expr env e = match e.expr_desc with
                                                                                                   with Not_found -> (Hashtbl.add adresses v.v_id !addr; addr := !addr - sizeof(v.v_typ); (expr env e) ++ (pushq (reg rdi))))
                                                                                                ++ (aux vl el)
                                                   | _ -> failwith "Le nombe d'arguments n'est pas celui attendu!"
-                      in let decl_vars = aux f.fn_params el in
-                         decl_vars ++ call ("F_"^f.fn_name) ++ (movq (reg rax) (reg rdi))
+                                                in let decl_vars = aux f.fn_params el in
+                                                   decl_vars ++ call ("F_"^f.fn_name) ++ (movq (reg rax) (reg rdi))
                             | TEdot (e1, {f_ofs=ofs}) ->
                                (* TODO code pour e.f *) assert false
                             | TEvars (lvars, lassigne) -> assert false
@@ -187,9 +188,12 @@ let rec expr env e = match e.expr_desc with
                             | TEreturn [e1] -> (expr env e1) ++ (movq (reg rdi) (reg rax))
                             | TEreturn _ ->
                                assert false
-                            | TEincdec (e1, op) -> match op with
-                                                   | Inc -> movq (imm 1) (reg rsi) ++ addq (reg rsi) (reg rdi)
-                                                   | Dec -> movq (imm 1) (reg rsi) ++ subq (reg rsi) (reg rdi)
+                            | TEincdec (e1, op) -> match e1 with
+                                                   | {expr_desc = TEident x} ->  begin match op with
+                                                                                  | Inc -> (expr env e1) ++ movq (imm 1) (reg rsi) ++ addq (reg rsi) (reg rdi) ++ (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses x.v_id))^"(%rbp)\n"))
+                                                                                  | Dec -> (expr env e1)++ movq (imm 1) (reg rsi) ++ subq (reg rsi) (reg rdi) ++ (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses x.v_id))^"(%rbp)\n"))
+                                                                                  end
+                                                   | _ -> failwith "impossible d'incrémenter ou décrémenter une expression qui n'est pas une variable"
 ;;
 
 let function_ f e =
