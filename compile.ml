@@ -155,6 +155,7 @@ let rec expr env e = match e.expr_desc with
                                                    | _ -> assert false
                                                    end
                             | TEunop (Ustar, e1) -> (expr env e1) ++ (movq (reg rdi) (reg rsi)) ++ (movq (reg rbp) (reg rdi)) ++ (addq (reg rsi) (reg rdi)) ++ (inline "\tmovq (%rdi), %rdi\n")
+(* Pour renvoyer l'adresse d'une variable, on utilise simplement celle qui est stockée dans le dictionnaire adresses. Ensuite, on peut déréférencer en déplaçant la valeur stockée à cette adresse dans %rdi. *) *)
                             | TEprint el ->
                                let affiche x = match x.expr_typ with
                                  | Tint -> (expr env x) ++ (call "print_int")
@@ -166,6 +167,7 @@ let rec expr env e = match e.expr_desc with
                                     | x::q -> let cas = affiche_liste q in (affiche  x) ++ cas
                                   in affiche_liste el
                             | TEident x -> inline ("\tmovq "^(string_of_int (Hashtbl.find adresses x.v_id)^"(%rbp), %rdi\n"))
+(* Pour récupérer la valeur d'une variable, on déplace la valeur stockée à l'adresse associée à la variable dans le dictionnaire adresses dans %rdi *)
                             | TEassign ([{expr_desc=TEident x}], [e1]) -> (expr env e1) ++ (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses x.v_id))^"(%rbp)\n"))
                             | TEassign (lv, le) -> let rec evalue_valeurs l = match l with
                                                      | [] -> nop
@@ -175,6 +177,7 @@ let rec expr env e = match e.expr_desc with
                                                         | ({expr_desc=TEident v})::l -> (popq rdi) ++ (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses v.v_id))^"(%rbp)\n")) ++ (assigne_valeurs l)
                                                         | _ -> failwith "Tentative d'assigner une expression à une expression qui n'est pas une variable!"
                                                       in (evalue_valeurs le) ++ (assigne_valeurs (List.rev lv))
+(* Pour les TEassign, il suffit de modifier la valeur stockée à l'adresse des variables. Dans le cas des affectations en parallèle, il faut évaluer toutes les expressions avant de réaliser les affectations. Pour cela, on les place sur la pile. *) 
                             | TEblock el -> let rec seq el env = begin match el with
                                                                  | [] -> nop
                                                                  | {expr_desc = TEvars (vl,al); expr_typ = Tmany [] }::el -> let rec aux vl al env =  match vl, al with
@@ -186,12 +189,15 @@ let rec expr env e = match e.expr_desc with
                                                                  | x::el -> (expr env x) ++ seq el env
                                                                  end
                                             in seq el env
+(* On concatène les codes associés à chaque expression du bloc. Pour les variables, on empile leurs valeurs sur la pile en incrémentant le compteur de variables et en stockant leurs adresses dans le dictionnaire adresses. *)
                             | TEif (e1, e2, e3) -> let a, b, c = new_label(), new_label(), new_label() in
                                                    (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne a) ++ (je b) ++ (label a) ++ (expr env e2) ++ (jmp c) ++ (label b) ++ (expr env e3) ++ (jmp c) ++ (label c)
                             | TEfor (e1, e2) ->  let a, b, c = new_label(), new_label(), new_label() in
                                                  (jmp a) ++ (label a) ++ (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++ (label b) ++ (expr env e2) ++ (jmp a) ++ ret ++ (label c) ++ ret
+(* On utilise des sauts conditionnels pour pouvoir sauter les bouts de code qu'on veut éviter dans le cas du if ou pour en répéter une partie dans le cas du while *)
                             | TEnew ty ->
                                (* TODO code pour new S *) assert false
+(* Je ne l'ai pas fait. *)
                             | TEcall (f, el) -> let rec aux vl el = match vl, el with
                                                   | [], [] -> nop
                                                   | v::vl, e::el -> nombre_vars := !nombre_vars + 1;
@@ -202,6 +208,7 @@ let rec expr env e = match e.expr_desc with
                                                   | _ -> failwith "Le nombe d'arguments n'est pas celui attendu!"
                                                 in let decl_vars = aux f.fn_params el in
                                                    decl_vars ++ call ("F_"^f.fn_name) ++ (movq (reg rax) (reg rdi))
+(* Le code des fonctions est déjà généré à l'aide des appels à function_ ainsi il suffit d'insérer "call <fonction>" dans le code puis mettre le contenu de %rdi dans %rax. La fonction auxiliaire avait pour but de gérer le cas des fonctions à paramètres en ajoutant des variables supplémentaires pour chaque paramètre mais ça n'a pas fonctionné (cf. rapport). *)
                             | TEdot (e1, {f_ofs=ofs}) ->
                                (* TODO code pour e.f *) assert false
                             | TEvars (lvars, lassigne) -> assert false
@@ -216,6 +223,7 @@ let rec expr env e = match e.expr_desc with
                                                                                   | Dec -> (expr env e1)++ movq (imm 1) (reg rsi) ++ subq (reg rsi) (reg rdi) ++ (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses x.v_id))^"(%rbp)\n"))
                                                                                   end
                                                    | _ -> failwith "impossible d'incrémenter ou décrémenter une expression qui n'est pas une variable"
+(* On effectue simplement une addition ou une soustraction par 1 en récupérant la valeur de la variable comme pour TEident puis on modifie la valeur de la variable comme avec TEassign. *)
 ;;
 
 let function_ f e =
@@ -228,6 +236,8 @@ let function_ f e =
   done;
   nombre_vars := 0;
   label ("F_" ^ s) ++ (pushq (reg rbp)) ++ (movq (reg rsp) (reg rbp)) ++ code ++ (!dep) ++ (popq rbp) ++ ret
+  
+ (* On ajoute une fonction en assembleur qui contient le code généré à partir du corps de la fonction. On compte aussi le nombre de variables empilées afin de pouvoir les dépiler et éviter les erreurs "segmentation fault". *)
 
 let decl code = function
   | TDfunction (f, e) -> code ++ function_ f e
@@ -268,11 +278,14 @@ print_false:
         call print_string
         ret
 ";
+(* Pour print_string, il s'agit d'un simple appel à printf qui affiche la chaîne de caractère stockée dans %rdi. Pour print_bool, on fait un saut à une fonction qui affiche "true" si le booléen contenu dans %rdi est vrai ou à une fonction qui affiche "false" sinon.
    (* TODO appel malloc de stdlib *)
     data =
       label "true" ++ string "true\n" ++
       label "false" ++ string "false\n" ++
       label "S_int" ++ string "%ld\n" ++
-      (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop) (* On ajoute récursivement (label l ++ string s à nop pour (l,s) dans strings *)
+      (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop) 
+      
+(* On ajoute récursivement (label l ++ string s à nop pour (l,s) dans strings *)
     ;
   }
