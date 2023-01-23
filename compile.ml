@@ -69,6 +69,7 @@ let compile_bool f =
 
 let nombre_vars = ref 0;;
 let addr = ref (-8);;
+let id_pointeur = ref (-1);;
 
 let rec expr env e = match e.expr_desc with
                             | TEskip ->
@@ -96,7 +97,7 @@ let rec expr env e = match e.expr_desc with
                                                          (label b) ++ (movq (imm 1) (reg rdi)) ++ (jmp d) ++ ret ++
                                                          (label c) ++ (movq (imm 0) (reg rdi)) ++ (jmp d) ++ ret ++
                                                          (label d)
-  | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) -> let a, b, c = new_label(), new_label(), new_label() in
+                            | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) -> let a, b, c = new_label(), new_label(), new_label() in
                                                      let jumps_op = begin match op with
                                                                     | Blt -> jl, jge
                                                                     | Ble -> jle, jg
@@ -109,7 +110,7 @@ let rec expr env e = match e.expr_desc with
                                                           (label a) ++ (movq (imm 1) (reg rdi)) ++ (jmp c) ++ ret ++
                                                           (label b) ++ (movq (imm 0) (reg rdi)) ++ (jmp c) ++ ret ++
                                                           (label c)
-  | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) -> let opq = fun x y -> begin match op with
+                            | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) -> let opq = fun x y -> begin match op with
                                                                                      | Badd -> addq x y
                                                                                      | Bsub -> subq x y
                                                                                      | Bmul -> imulq x y
@@ -118,78 +119,77 @@ let rec expr env e = match e.expr_desc with
                                                                                      | _ -> nop
                                                                                      end in
                                                                 (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++ (opq (reg rsi) (reg rdi))
-  | TEbinop (Beq | Bne as op, e1, e2) -> let a, b, c = new_label(), new_label(), new_label() in
-                                         (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++
-                                           (cmpq (reg rsi) (reg rdi)) ++ begin
-                                             if op = Beq then (je a) ++ (jne b)
-                                             else (jne a) ++ (je b) end ++
-                                           (label a) ++ (movq (imm 1) (reg rdi)) ++ (jmp c) ++ ret ++
-                                           (label b) ++ (movq (imm 0) (reg rdi)) ++ (jmp c) ++ ret ++
-                                           (label c)
-  | TEunop (Uneg, e1) -> (expr env e1) ++ (negq (reg rdi))
-  | TEunop (Unot, e1) -> (expr env e1) ++ (movq (imm 1) (reg rsi)) ++ (subq (reg rdi) (reg rsi)) ++ (movq (reg rsi) (reg rdi))
-  | TEunop (Uamp, e1) ->
-     (* TODO code pour & *) assert false
-  | TEunop (Ustar, e1) ->
-    (* TODO code pour * *) assert false
-  | TEprint el ->
-     let affiche x = match x.expr_typ with
-       | Tint -> (expr env x) ++ (call "print_int")
-       | Tstring -> (expr env x) ++ (call "print_string")
-       | Tbool -> (expr env x) ++ (call "print_bool")
-       | _ -> nop
-     in let rec affiche_liste q = match q with
-       | [] -> nop
-       | x::q -> let cas = affiche_liste q in (affiche  x) ++ cas
-     in affiche_liste el
-  | TEident x -> inline ("\tmovq "^(string_of_int (Hashtbl.find adresses x.v_id)^"(%rbp), %rdi\n"))
-  | TEassign ([{expr_desc=TEident x}], [e1]) -> (expr env e1) ++ (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses x.v_id))^"(%rbp)\n"))
-  | TEassign (lv, le) -> let rec evalue_valeurs l = match l with
-                           | [] -> nop
-                           | e::l -> (expr env e) ++ (pushq (reg rdi)) ++ (evalue_valeurs l)
-                         in let rec assigne_valeurs l = match l with
-                              | [] -> nop
-                              | ({expr_desc=TEident v})::l -> (popq rdi) ++ (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses v.v_id))^"(%rbp)\n")) ++ (assigne_valeurs l)
-                              | _ -> failwith "Tentative d'assigner une expression à une expression qui n'est pas une variable!"
-                            in (evalue_valeurs le) ++ (assigne_valeurs (List.rev lv))
-  | TEblock el -> let rec seq el env = begin match el with
-                  | [] -> nop
-                  | {expr_desc = TEvars (vl,al); expr_typ = Tmany [] }::el -> let rec aux vl al env =  match vl, al with
-                                                                                | [], [] -> nop
-                                                                                | v::vl, a::al -> nombre_vars := !nombre_vars + 1; Hashtbl.add adresses v.v_id !addr; addr := !addr - sizeof(v.v_typ); (expr env a) ++ (pushq (reg rdi)) ++ (aux vl al env)
-                                                                                | _ -> failwith "La liste des variables et celle des valeurs à assigner n'ont pas la même longueur !"
-                                                                              in let code = aux vl al env in
-                                                                                 code ++ (seq el env)
-                  | x::el -> (expr env x) ++ seq el env
-                                       end
-                  in seq el env
-  | TEif (e1, e2, e3) -> let a, b, c = new_label(), new_label(), new_label() in
-      (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne a) ++ (je b) ++ (label a) ++ (expr env e2) ++ (jmp c) ++ (label b) ++ (expr env e3) ++ (jmp c) ++ (label c)
-  | TEfor (e1, e2) ->  let a, b, c = new_label(), new_label(), new_label() in
-                       (jmp a) ++ (label a) ++ (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++ (label b) ++ (expr env e2) ++ (jmp a) ++ ret ++ (label c) ++ ret
-  | TEnew ty ->
-     (* TODO code pour new S *) assert false
-  | TEcall (f, el) -> let rec aux vl el = match vl, el with
-                        | [], [] -> nop
-                        | v::vl, e::el -> nombre_vars := !nombre_vars + 1;
-                                          let valeur = expr env e in valeur ++
-                                                                       (try (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses v.v_id))^"(%rbp)\n"))
-                                                                       with Not_found -> (Hashtbl.add adresses v.v_id !addr; addr := !addr - sizeof(v.v_typ); (expr env e) ++ (pushq (reg rdi))))
-                                                                     ++ (aux vl el)
-                        | _ -> failwith "Le nombe d'arguments n'est pas celui attendu!"
+                            | TEbinop (Beq | Bne as op, e1, e2) -> let a, b, c = new_label(), new_label(), new_label() in
+                                                                   (expr env e1) ++ (pushq (reg rdi)) ++ (expr env e2) ++ (pushq (reg rdi)) ++ (popq rsi) ++ (popq rdi) ++
+                                                                     (cmpq (reg rsi) (reg rdi)) ++ begin
+                                                                       if op = Beq then (je a) ++ (jne b)
+                                                                       else (jne a) ++ (je b) end ++
+                                                                     (label a) ++ (movq (imm 1) (reg rdi)) ++ (jmp c) ++ ret ++
+                                                                     (label b) ++ (movq (imm 0) (reg rdi)) ++ (jmp c) ++ ret ++
+                                                                     (label c)
+                            | TEunop (Uneg, e1) -> (expr env e1) ++ (negq (reg rdi))
+                            | TEunop (Unot, e1) -> (expr env e1) ++ (movq (imm 1) (reg rsi)) ++ (subq (reg rdi) (reg rsi)) ++ (movq (reg rsi) (reg rdi))
+                            | TEunop (Uamp, e1) -> (expr env e1) ++ 
+                            | TEunop (Ustar, e1) -> nombre_vars := !nombre_vars + 1; Hashtbl.add adresses (!id_pointeur) (!addr); addr := !addr - sizeof(e1.expr_typ); id_pointeur := !id_pointeur - 1;
+                                                    (expr env e1) ++ (pushq (reg rdi)) ++ (movq (imm !addr) (reg rdi))
+                            | TEprint el ->
+                               let affiche x = match x.expr_typ with
+                                 | Tint -> (expr env x) ++ (call "print_int")
+                                 | Tstring -> (expr env x) ++ (call "print_string")
+                                 | Tbool -> (expr env x) ++ (call "print_bool")
+                                 | _ -> nop
+                               in let rec affiche_liste q = match q with
+                                    | [] -> nop
+                                    | x::q -> let cas = affiche_liste q in (affiche  x) ++ cas
+                                  in affiche_liste el
+                            | TEident x -> inline ("\tmovq "^(string_of_int (Hashtbl.find adresses x.v_id)^"(%rbp), %rdi\n"))
+                            | TEassign ([{expr_desc=TEident x}], [e1]) -> (expr env e1) ++ (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses x.v_id))^"(%rbp)\n"))
+                            | TEassign (lv, le) -> let rec evalue_valeurs l = match l with
+                                                     | [] -> nop
+                                                     | e::l -> (expr env e) ++ (pushq (reg rdi)) ++ (evalue_valeurs l)
+                                                   in let rec assigne_valeurs l = match l with
+                                                        | [] -> nop
+                                                        | ({expr_desc=TEident v})::l -> (popq rdi) ++ (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses v.v_id))^"(%rbp)\n")) ++ (assigne_valeurs l)
+                                                        | _ -> failwith "Tentative d'assigner une expression à une expression qui n'est pas une variable!"
+                                                      in (evalue_valeurs le) ++ (assigne_valeurs (List.rev lv))
+                            | TEblock el -> let rec seq el env = begin match el with
+                                                                 | [] -> nop
+                                                                 | {expr_desc = TEvars (vl,al); expr_typ = Tmany [] }::el -> let rec aux vl al env =  match vl, al with
+                                                                                                                               | [], [] -> nop
+                                                                                                                               | v::vl, a::al -> nombre_vars := !nombre_vars + 1; Hashtbl.add adresses v.v_id !addr; addr := !addr - sizeof(v.v_typ); (expr env a) ++ (pushq (reg rdi)) ++ (aux vl al env)
+                                                                                                                               | _ -> failwith "La liste des variables et celle des valeurs à assigner n'ont pas la même longueur !"
+                                                                                                                             in let code = aux vl al env in
+                                                                                                                                code ++ (seq el env)
+                                                                 | x::el -> (expr env x) ++ seq el env
+                                                                 end
+                                            in seq el env
+                            | TEif (e1, e2, e3) -> let a, b, c = new_label(), new_label(), new_label() in
+                                                   (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne a) ++ (je b) ++ (label a) ++ (expr env e2) ++ (jmp c) ++ (label b) ++ (expr env e3) ++ (jmp c) ++ (label c)
+                            | TEfor (e1, e2) ->  let a, b, c = new_label(), new_label(), new_label() in
+                                                 (jmp a) ++ (label a) ++ (expr env e1) ++ (testq (reg rdi) (reg rdi)) ++ (jne b) ++ (je c) ++ ret ++ (label b) ++ (expr env e2) ++ (jmp a) ++ ret ++ (label c) ++ ret
+                            | TEnew ty ->
+                               (* TODO code pour new S *) assert false
+                            | TEcall (f, el) -> let rec aux vl el = match vl, el with
+                                                  | [], [] -> nop
+                                                  | v::vl, e::el -> nombre_vars := !nombre_vars + 1;
+                                                                    let valeur = expr env e in valeur ++
+                                                                                                 (try (inline ("\tmovq %rdi, "^(string_of_int (Hashtbl.find adresses v.v_id))^"(%rbp)\n"))
+                                                                                                  with Not_found -> (Hashtbl.add adresses v.v_id !addr; addr := !addr - sizeof(v.v_typ); (expr env e) ++ (pushq (reg rdi))))
+                                                                                               ++ (aux vl el)
+                                                  | _ -> failwith "Le nombe d'arguments n'est pas celui attendu!"
                       in let decl_vars = aux f.fn_params el in
-                      decl_vars ++ call ("F_"^f.fn_name) ++ (movq (reg rax) (reg rdi))
-  | TEdot (e1, {f_ofs=ofs}) ->
-     (* TODO code pour e.f *) assert false
-  | TEvars (lvars, lassigne) -> assert false
-                                       (* fait dans block *)
-  | TEreturn [] -> nop
-  | TEreturn [e1] -> (expr env e1) ++ (movq (reg rdi) (reg rax))
-  | TEreturn _ ->
-     assert false
-  | TEincdec (e1, op) -> match op with
-                         | Inc -> movq (imm 1) (reg rsi) ++ addq (reg rsi) (reg rdi)
-                         | Dec -> movq (imm 1) (reg rsi) ++ subq (reg rsi) (reg rdi)
+                         decl_vars ++ call ("F_"^f.fn_name) ++ (movq (reg rax) (reg rdi))
+                            | TEdot (e1, {f_ofs=ofs}) ->
+                               (* TODO code pour e.f *) assert false
+                            | TEvars (lvars, lassigne) -> assert false
+                            (* fait dans block *)
+                            | TEreturn [] -> nop
+                            | TEreturn [e1] -> (expr env e1) ++ (movq (reg rdi) (reg rax))
+                            | TEreturn _ ->
+                               assert false
+                            | TEincdec (e1, op) -> match op with
+                                                   | Inc -> movq (imm 1) (reg rsi) ++ addq (reg rsi) (reg rdi)
+                                                   | Dec -> movq (imm 1) (reg rsi) ++ subq (reg rsi) (reg rdi)
 ;;
 
 let function_ f e =
